@@ -1,28 +1,23 @@
-import { Controller, Post, Body, Get, HttpException, HttpStatus } from '@nestjs/common';
+// src/mcp/mcp.controller.ts
+import { Controller, Get, Post, Body, HttpException, HttpStatus } from '@nestjs/common';
 import { PrAnalyzerService } from './pr-analyzer.service';
-
-interface McpToolRequest {
-  name: string;
-  arguments: Record<string, any>;
-}
-
-interface FetchPrRequest {
-  repo_owner: string;
-  repo_name: string;
-  pr_number: number;
-}
-
-interface CreateNotionPageRequest {
-  title: string;
-  content: string;
-}
 
 @Controller('mcp')
 export class McpController {
-  constructor(private prAnalyzerService: PrAnalyzerService) {}
+  constructor(private readonly prAnalyzerService: PrAnalyzerService) {}
 
-  @Get('list-tools')
-  listTools() {
+  @Get('health')
+  getHealth() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'nestjs-mcp-pr-reviewer',
+      version: '1.0.0',
+    };
+  }
+
+  @Post('list-tools')
+  async listTools() {
     return {
       tools: [
         {
@@ -31,9 +26,9 @@ export class McpController {
           inputSchema: {
             type: 'object',
             properties: {
-              repo_owner: { type: 'string', description: 'The owner of the GitHub repository' },
-              repo_name: { type: 'string', description: 'The name of the GitHub repository' },
-              pr_number: { type: 'number', description: 'The number of the pull request to analyze' },
+              repo_owner: { type: 'string', description: 'Repository owner' },
+              repo_name: { type: 'string', description: 'Repository name' },
+              pr_number: { type: 'number', description: 'PR number' },
             },
             required: ['repo_owner', 'repo_name', 'pr_number'],
           },
@@ -44,8 +39,8 @@ export class McpController {
           inputSchema: {
             type: 'object',
             properties: {
-              title: { type: 'string', description: 'Title for the Notion page' },
-              content: { type: 'string', description: 'Content for the Notion page' },
+              title: { type: 'string', description: 'Page title' },
+              content: { type: 'string', description: 'Page content' },
             },
             required: ['title', 'content'],
           },
@@ -55,46 +50,71 @@ export class McpController {
   }
 
   @Post('call-tool')
-  async callTool(@Body() request: McpToolRequest) {
-    const { name, arguments: args } = request;
+  async callTool(@Body() body: any) {
+    const { name, arguments: args } = body;
 
     try {
+      let result;
+
       switch (name) {
         case 'fetch_pr':
-          const fetchArgs = args as FetchPrRequest;
-          const prInfo = await this.prAnalyzerService.fetchPr(
-            fetchArgs.repo_owner,
-            fetchArgs.repo_name,
-            fetchArgs.pr_number,
+          result = await this.prAnalyzerService.fetchPr(
+            args.repo_owner,
+            args.repo_name,
+            args.pr_number,
           );
-          return { result: prInfo };
+          break;
 
         case 'create_notion_page':
-          const createArgs = args as CreateNotionPageRequest;
-          const result = await this.prAnalyzerService.createNotionPage(
-            createArgs.title,
-            createArgs.content,
+          result = await this.prAnalyzerService.createNotionPage(
+            args.title,
+            args.content,
           );
-          return { result };
+          break;
 
         default:
           throw new HttpException(`Unknown tool: ${name}`, HttpStatus.BAD_REQUEST);
       }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+          },
+        ],
+      };
     } catch (error) {
       throw new HttpException(
-        `Error executing tool ${name}: ${error.message}`,
+        {
+          error: error.message,
+          tool: name,
+        },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
 
-  @Get('health')
-  async health() {
-    const serviceStatus = await this.prAnalyzerService.validateServices();
-    return {
-      status: 'ok',
-      services: serviceStatus,
-      timestamp: new Date().toISOString(),
-    };
+  @Get('validate')
+  async validateSetup() {
+    try {
+      // Fixed: Use the correct method name from PrAnalyzerService
+      await this.prAnalyzerService.validateSetup();
+      
+      return {
+        status: 'valid',
+        message: 'All services are properly configured',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          status: 'invalid',
+          message: error.message,
+          timestamp: new Date().toISOString(),
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 }

@@ -1,137 +1,83 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+// src/github/github.service.ts
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config'; // Added missing import
 import axios, { AxiosInstance } from 'axios';
 
-export interface PullRequestFile {
-  filename: string;
-  status: 'added' | 'modified' | 'removed';
-  additions: number;
-  deletions: number;
-  changes: number;
-  patch?: string;
-  raw_url?: string;
-  contents_url?: string;
-}
-
-export interface PullRequestInfo {
+export interface PullRequestInfo { // Added missing interface
   title: string;
   description: string;
   author: string;
   created_at: string;
-  updated_at: string;
-  state: string;
-  total_changes: number;
   changes: PullRequestFile[];
+}
+
+export interface PullRequestFile { // Added missing interface
+  filename: string;
+  status: 'added' | 'modified' | 'removed';
+  additions: number;
+  deletions: number;
+  patch?: string;
 }
 
 @Injectable()
 export class GitHubService {
-  private readonly logger = new Logger(GitHubService.name);
+  private readonly githubToken: string; // Added missing property
   private readonly httpClient: AxiosInstance;
-  private readonly githubToken: string;
 
   constructor(private configService: ConfigService) {
     this.githubToken = this.configService.get<string>('GITHUB_TOKEN');
     
     if (!this.githubToken) {
+      console.error('GITHUB_TOKEN is required in environment variables');
       throw new Error('GITHUB_TOKEN is required in environment variables');
     }
 
     this.httpClient = axios.create({
       baseURL: 'https://api.github.com',
       headers: {
-        'Authorization': `token ${this.githubToken}`,
+        'Authorization': `Bearer ${this.githubToken}`,
         'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'NestJS-MCP-PR-Reviewer/1.0.0',
+        'User-Agent': 'NestJS-MCP-Server/1.0.0',
       },
       timeout: 30000,
     });
   }
 
-  async fetchPrChanges(
-    repoOwner: string,
-    repoName: string,
-    prNumber: number,
-  ): Promise<PullRequestInfo | null> {
-    this.logger.log(`Fetching PR changes for ${repoOwner}/${repoName}#${prNumber}`);
-
+  async fetchPrChanges(repoOwner: string, repoName: string, prNumber: number): Promise<PullRequestInfo> {
     try {
       // Fetch PR metadata
-      const prResponse = await this.httpClient.get(
-        `/repos/${repoOwner}/${repoName}/pulls/${prNumber}`,
-      );
-      const prData = prResponse.data;
-
-      // Fetch file changes
-      const filesResponse = await this.httpClient.get(
-        `/repos/${repoOwner}/${repoName}/pulls/${prNumber}/files`,
-      );
-      const filesData = filesResponse.data;
-
-      // Transform file changes
-      const changes: PullRequestFile[] = filesData.map((file: any) => ({
+      const prResponse = await this.httpClient.get(`/repos/${repoOwner}/${repoName}/pulls/${prNumber}`);
+      
+      // Fetch PR files/changes
+      const filesResponse = await this.httpClient.get(`/repos/${repoOwner}/${repoName}/pulls/${prNumber}/files`);
+      
+      const changes: PullRequestFile[] = filesResponse.data.map((file: any) => ({
         filename: file.filename,
         status: file.status,
         additions: file.additions,
         deletions: file.deletions,
-        changes: file.changes,
-        patch: file.patch || '',
-        raw_url: file.raw_url || '',
-        contents_url: file.contents_url || '',
+        patch: file.patch,
       }));
 
-      // Combine PR metadata with file changes
-      const prInfo: PullRequestInfo = {
-        title: prData.title,
-        description: prData.body || '',
-        author: prData.user.login,
-        created_at: prData.created_at,
-        updated_at: prData.updated_at,
-        state: prData.state,
-        total_changes: changes.length,
+      return {
+        title: prResponse.data.title,
+        description: prResponse.data.body || '',
+        author: prResponse.data.user.login,
+        created_at: prResponse.data.created_at,
         changes,
       };
-
-      this.logger.log(`Successfully fetched ${changes.length} changes`);
-      return prInfo;
     } catch (error) {
-      this.logger.error(`Error fetching PR changes: ${error.message}`, error.stack);
-      return null;
+      console.error(`Error fetching PR ${prNumber}:`, error.message);
+      throw new Error(`Failed to fetch PR #${prNumber}: ${error.message}`);
     }
   }
 
-  async validateRepository(repoOwner: string, repoName: string): Promise<boolean> {
+  async validateRepository(owner: string, repo: string): Promise<boolean> {
     try {
-      await this.httpClient.get(`/repos/${repoOwner}/${repoName}`);
+      await this.httpClient.get(`/repos/${owner}/${repo}`);
       return true;
     } catch (error) {
-      this.logger.warn(`Repository ${repoOwner}/${repoName} not accessible: ${error.message}`);
       return false;
-    }
-  }
-
-  async getPullRequestList(
-    repoOwner: string,
-    repoName: string,
-    state: 'open' | 'closed' | 'all' = 'open',
-    limit: number = 10,
-  ): Promise<any[]> {
-    try {
-      const response = await this.httpClient.get(
-        `/repos/${repoOwner}/${repoName}/pulls`,
-        {
-          params: {
-            state,
-            per_page: limit,
-            sort: 'updated',
-            direction: 'desc',
-          },
-        },
-      );
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Error fetching PR list: ${error.message}`, error.stack);
-      return [];
     }
   }
 }

@@ -1,42 +1,48 @@
+// src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
-import { McpServerService } from './mcp/mcp-server.service';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
+  // Disable colored output for STDIO mode
+  process.env.NO_COLOR = '1';
   
-  try {
-    const app = await NestFactory.create(AppModule);
-    const configService = app.get(ConfigService);
-    const mcpServerService = app.get(McpServerService);
+  const transportMode = process.env.MCP_TRANSPORT || 'stdio';
+  
+  if (transportMode === 'stdio') {
+    // STDIO mode for Claude Desktop - minimal logging
+    const app = await NestFactory.createApplicationContext(AppModule, {
+      logger: false, // Disable NestJS logger completely for STDIO
+    });
     
-    // Get transport mode from environment
-    const transportMode = process.env.MCP_TRANSPORT || 'stdio';
+    // Setup clean process handlers
+    process.on('SIGINT', async () => {
+      await app.close();
+      process.exit(0);
+    });
     
-    if (transportMode === 'stdio') {
-      // STDIO mode for Claude Desktop integration
-      logger.log('Starting MCP Server in STDIO mode for Claude Desktop...');
-      await mcpServerService.startStdioServer();
-    } else {
-      // HTTP mode for web-based integrations
-      const port = configService.get<number>('PORT', 3000);
-      
-      // Enable CORS for web integrations
-      app.enableCors({
-        origin: true,
-        credentials: true,
-      });
-      
-      await app.listen(port);
-      logger.log(`🚀 MCP Server running on: http://localhost:${port}`);
-      logger.log(`📊 Health check: http://localhost:${port}/health`);
-    }
-  } catch (error) {
-    logger.error('Failed to start application:', error);
-    process.exit(1);
+    process.on('SIGTERM', async () => {
+      await app.close();
+      process.exit(0);
+    });
+
+    // Keep the process alive - MCP SDK handles STDIO communication
+    
+  } else {
+    // HTTP mode with normal logging
+    const app = await NestFactory.create(AppModule); // Fixed: was NestJS.create
+    const port = process.env.PORT || 3000;
+    
+    app.enableCors();
+    await app.listen(port);
+    
+    const logger = new Logger('Bootstrap');
+    logger.log(`🚀 MCP Server running on http://localhost:${port}`);
   }
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  // Send errors to stderr, not stdout
+  console.error('Bootstrap error:', error);
+  process.exit(1);
+});
