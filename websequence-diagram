@@ -1,0 +1,21 @@
+title Communication Flow
+participant User
+participant "Host Application" as Host
+participant "MCP Client" as Client
+participant "MCP Server" as Server
+participant Third Party API as API
+
+Client->Server: 1. Client Initialization (Connect to appropiate server)
+Server->Client: 2. Initialization Response
+Client->Server: 3. Capability Discovery 
+Server->Client: 4. Available tools, resources, prompts
+User->Host: 5. User Interaction (intent/query)
+note over Host: 6. Host Processing (LLM understands request)
+Host->Client: 7. Capability Invocation (invoke specific capabilities)
+Client->Server:8. Execute Requested functionality
+Server->API: 9. Server Execution
+API->Server: 10. API response
+Server->Client: 11. Return Results
+Client->Host: 12. Result integration (relay results back)
+note over Host: Incorporate Result into LLM Context
+Host->User: 13. Present results to User
